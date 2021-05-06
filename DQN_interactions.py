@@ -1,0 +1,117 @@
+from collections import deque
+import numpy as np
+import torch
+import time
+
+def reset(env,train_mode=True):
+    """ Performs an Environment step with a particular action.
+    Params
+    ======
+        env: instance of UnityEnvironment class
+    """
+    # get the default brain
+    brain_name = env.brain_names[0]
+    env_info = env.reset(train_mode=train_mode)[brain_name]
+    # get state
+    state = env_info.vector_observations[0]
+    return state
+
+def step(env, action):
+    """ Performs an Environment step with a particular action.
+    Params
+    ======
+        env: instance of UnityEnvironment class
+        action: a valid action on the env
+    """
+    # get the default brain
+    brain_name = env.brain_names[0]
+    env_info = env.step(action)[brain_name]
+    # get result from taken action
+    next_state = env_info.vector_observations[0]
+    reward = env_info.rewards[0]
+    done = env_info.local_done[0]
+    return next_state, reward, done
+
+def dqn_interact(env, agent,
+                 n_episodes=2000, window=100, max_t=1000,
+                 eps_start=1.0, eps_end=0.005, eps_decay=0.980,
+                 filename='checkpoint.pth'):
+    """ Deep Q-Learning Agent-Environment interaction.
+    
+    Params
+    ======
+        env: instance of UnityEnvironment class
+        agent: instance of class Agent (see dqn_agent.py for details)
+        n_episodes (int): maximum number of training episodes
+        window (int): number of episodes to consider when calculating average rewards
+        max_t (int): maximum number of timesteps per episode
+        eps_start (float): starting value of epsilon, for epsilon-greedy action selection
+        eps_end (float): minimum value of epsilon
+        eps_decay (float): multiplicative factor (per episode) for decreasing epsilon
+        filename (string): name of the file to save weights
+    """
+    first_time=True
+    # all returns
+    all_returns = []
+    # initialize average rewards
+    avg_rewards = deque(maxlen=n_episodes)
+    # initialize monitor for most recent rewards
+    samp_rewards = deque(maxlen=window)
+    # initialize best average reward
+    best_avg_reward = -np.inf
+    # initialize eps
+    eps = eps_start
+    # init timer
+    tic = time.clock()
+    # for each episode
+    for i_episode in range(1, n_episodes+1):
+        # begin the episode
+        state = reset(env, train_mode=True)
+        # initialize the sample reward
+        samp_reward = 0
+        for t in range(max_t):
+            # agent selects an action
+            action =  agent.act(state, eps)
+            # agent performs the selected action
+            next_state, reward, done = step(env, action)
+            # agent performs internal updates based on sampled experience
+            agent.step(state, action, reward, next_state, done)
+            # updated the sample reward
+            samp_reward += reward
+            # update the state (s-> s') to next time step
+            state = next_state
+            if done:
+                break
+        # save final sampled reward
+        samp_rewards.append(samp_reward)
+        all_returns.append(samp_reward)
+        # update epsion with GLIE
+        eps = max(eps_end, eps_decay*eps)
+        if (i_episode >= 100):
+            # get average reward from last and next 100 episodes
+            avg_reward = np.mean(samp_rewards)
+            # append to deque
+            avg_rewards.append(avg_reward)
+            # update best average reward
+            if avg_reward > best_avg_reward:
+                best_avg_reward = avg_reward
+        # monitor progress
+        message = "\rEpisode {}/{} || Best average reward {} || Epsilon {:.5f} "
+        if i_episode % 100 == 0:
+            print(message.format(i_episode, n_episodes, best_avg_reward, eps))
+        else:
+            print(message.format(i_episode, n_episodes, best_avg_reward, eps),end="")
+        # target criteria
+        if np.mean(samp_rewards)>=13.0 and first_time:
+            first_time=False
+            print('\nEnvironment solved in {:d} episodes!\tAverage Score: {:.2f}\tin {:.2f} secs'.
+                  format(i_episode, np.mean(samp_rewards), time.clock()-tic))
+        # stopping criteria
+        if np.mean(samp_rewards)>=15.0:
+            print('\nEnvironment solved in {:d} episodes!\tAverage Score: {:.2f}\tin {:.2f} secs'.
+                  format(i_episode, np.mean(samp_rewards), time.clock()-tic))
+            break
+    # save weights
+    torch.save(agent.actor_local.state_dict(), filename)
+    # return info
+    return all_returns, avg_rewards, best_avg_reward
